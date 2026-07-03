@@ -18,12 +18,12 @@ classifiers = [
   "Programming Language :: Python"
 ]
 dependencies = [
-  "eaf_base_api",
   "m3u8",
-  "demjson3",
-  "bs4"
-
-  ]
+  "chompjs",
+  "selectolax",
+  "bs4",
+  "eaf-base-api",
+]
 
 [project.optional-dependencies]
 av = ["av; python_version >= '3.12'"]
@@ -40,3 +40,6 @@ Repository = "https://github.com/EchterAlsFake/PHUB"
 [tool.uv.build-backend]
 module-name = "phub"
 module-root = ""
+
+[tool.uv.sources]
+eaf-base-api = { path = "../eaf_base_api", editable = true }

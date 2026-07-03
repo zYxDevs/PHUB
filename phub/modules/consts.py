@@ -1,15 +1,8 @@
 import re
-import math
 import json
-from bs4 import BeautifulSoup
-from curl_cffi import delete
 
-try:
-    import lxml
-    parser = "lxml" # Faster speeds, but more dependencies
+from selectolax.lexbor import LexborHTMLParser
 
-except (ModuleNotFoundError, ImportError):
-    parser = "html.parser" # Fallback to classic HTML parser (will work fine)
 
 INCREMENT = 30
 KNOWN_PRIME_FACTORS = [2, 3, 5]
@@ -40,31 +33,28 @@ LOGIN_PAYLOAD = {
 # REGEX for Video extraction:
 REGEX_VIDEO_FLASHVARS = re.compile(r"var\s+flashvars_\d+\s*=\s*(\{.*?\});", re.DOTALL)
 
-# REGEX FOR SHORTIES
-REGEX_SHORTIES_FLASHVARS = re.compile(r'JSON_SHORTIES = insertAfterNthPosition\((.*?)', re.DOTALL)
-
 # Regex for playlists and tokens
 REGEX_TOKEN = re.compile(r'token\s*=\s*"([^"]+)"')
 
 
 def extractor_gifs(html_content: str) -> list:
     links = []
-    soup = BeautifulSoup(html_content, parser)
+    lexbor = LexborHTMLParser(html_content)
     
     # Try multiple possible containers for GIFs
     containers = [
-        soup.find("div", class_="gifsWrapperProfile"),
-        soup.find("div", class_="gifsWrapper hideLastItemLarge"),
-        soup.find("div", class_="gifsWrapper"),
-        soup.find("ul", class_="gifs"),
-        soup.find("div", id="gifSearchListing"),
+        lexbor.css_first("div.gifsWrapperProfile"),
+        lexbor.css_first("div.gifsWrapper.hideLastItemLarge"),
+        lexbor.css_first("div.gifsWrapper"),
+        lexbor.css_first("ul.gifs"),
+        lexbor.css_first("div.gifSearchListing"),
     ]
     
-    # Find the first non-None container
-    main_div = next((c for c in containers if c is not None), soup)
+    # Find the first not-None container
+    main_div = next((c for c in containers if c is not None), lexbor)
 
-    for a_tag in main_div.find_all("a", href=True):
-        href = a_tag.get("href")
+    for a_tag in main_div.css("a[href]"):
+        href = a_tag.attributes.get("href")
         # Ensure it's a GIF link (usually /gif/ followed by digits) and not a duplicate
         if href.startswith("/gif/") and any(char.isdigit() for char in href):
             full_url = f"https://www.pornhub.com{href}"
@@ -74,18 +64,31 @@ def extractor_gifs(html_content: str) -> list:
     return list(set(links))
 
 
+def extractor_model(html_content: str) -> list:
+    urls = []
+
+    soup = LexborHTMLParser(html_content)
+    soup1 = soup.css_first("div.profileContentLeft")
+    video_keys = [key.attributes.get("data-video-vkey") for key in soup1.css("[data-video-vkey]")]
+
+    for key in video_keys:
+        urls.append(f"https://www.pornhub.com/view_video.php?viewkey={key}")
+
+    return urls
+
+
 def extractor_videos(html_content: str) -> list:
     results = []
-    soup = BeautifulSoup(html_content, parser)
+    lexbor = LexborHTMLParser(html_content)
     
     # Try different sections
-    video_blocks = soup.find_all(["li", "div"], class_=re.compile(r"pcVideoListItem|videoBox"))
+    video_blocks = lexbor.css("li > div.pcVideoListItem, li > div.videoBox")
 
     if not video_blocks:
         # Fallback to finding all link tags if blocks aren't found
-        a_tags = soup.find_all("a", href=re.compile(r"/view_video\.php\?viewkey="))
+        a_tags = lexbor.css('a[href^="/view_video.php?viewkey="]')
         for a_tag in a_tags:
-            href = a_tag.get("href")
+            href = a_tag.attributes.get("href")
             url = f"https://www.pornhub.com{href}"
             if any(r["url"] == url for r in results):
                 continue
@@ -95,11 +98,11 @@ def extractor_videos(html_content: str) -> list:
     for block in video_blocks:
         try:
             # Find the link tag which contains the URL and title
-            a_tag = block.find("a", href=re.compile(r"/view_video"))
+            a_tag = block.css_first("a[href*='view_video']")
             if not a_tag:
                 continue
                 
-            href = a_tag.get("href")
+            href = a_tag.attributes.get("href")
             if not href:
                 continue
                 
@@ -107,19 +110,19 @@ def extractor_videos(html_content: str) -> list:
             if any(r["url"] == url for r in results):
                 continue
 
-            title = a_tag.get("title") or (a_tag.find("img").get("alt") if a_tag.find("img") else "")
+            title = a_tag.attributes.get("title") or (a_tag.css_first("img").attributes.get("alt") if a_tag.css_first("img") else "")
             if not title:
                 # Try finding title in a separate link or span
-                title_link = block.find("a", class_="title") or block.find("span", class_="title")
-                title = title_link.text.strip() if title_link else ""
+                title_link = block.css_first("a.title") or block.css_first("span.title")
+                title = title_link.text(strip=True) if title_link else ""
             
             # Extract duration if available
-            duration_var = block.find("var", class_="duration")
-            duration = duration_var.text.strip() if duration_var else None
+            duration_var = block.css_first("var.duration")
+            duration = duration_var.text(strip=True) if duration_var else None
             
             # Extract thumbnail
-            img_tag = block.find("img")
-            thumb = img_tag.get("data-src") or img_tag.get("src") if img_tag else None
+            img_tag = block.css_first("img")
+            thumb = img_tag.attributes.get("data-src") or img_tag.attributes.get("src") if img_tag else None
 
             results.append({
                 "url": url,
@@ -153,12 +156,12 @@ def extractor_hubtraffic(json_content: str) -> list:
 
 def extractor_videos_from_playlist_page(html_content: str) -> list:
     links = []
-    soup = BeautifulSoup(html_content, parser)
+    lexbor = LexborHTMLParser(html_content)
     
     # Search for all 'a' tags with an href containing "/view_video.php?viewkey="
     # Use re.compile for regex matching in find_all
-    for a_tag in soup.find_all("a", href=re.compile(r"/view_video\.php\?viewkey=")):
-        href = a_tag.get("href")
+    for a_tag in lexbor.css("a[href*='viewkey=']"):
+        href = a_tag.attributes.get("href")
         if href:
             # Ensure the URL is absolute
             if not href.startswith("https://www.pornhub.com"):
@@ -181,13 +184,13 @@ def extractor_videos_playlist(content: str) -> list:
         html_to_parse = content
 
     if html_to_parse:
-        soup = BeautifulSoup(html_to_parse, parser)
+        lexbor = LexborHTMLParser(html_to_parse)
         # Search for common patterns for video links in playlist chunks
         # These patterns are derived from inspecting typical Pornhub playlist HTML
         
         # Search for all 'a' tags with an href containing "/view_video.php?viewkey="
-        for a_tag in soup.find_all("a", href=re.compile(r"/view_video\.php\?viewkey=")):
-            href = a_tag.get("href")
+        for a_tag in lexbor.css("a[href*='viewkey=']"):
+            href = a_tag.attributes.get("href")
             if href:
                 if not href.startswith("https://www.pornhub.com"):
                     links.append(f"https://www.pornhub.com{href}")
@@ -201,11 +204,11 @@ def extractor_users(html_content: str) -> list:
     """
     Extractor for users, models and pornstars.
     """
-    soup = BeautifulSoup(html_content, parser)
+    lexbor = LexborHTMLParser(html_content)
     users = []
     # Matches the user links in the subscriptions/followers pages
-    for a_tag in soup.find_all("a", class_="userLink", href=True):
-        href = a_tag.get("href")
+    for a_tag in lexbor.css("a.userLink[href]"):
+        href = a_tag.attributes.get("href")
         if href.startswith("/"):
             url = f"https://www.pornhub.com{href}"
             if url not in users:

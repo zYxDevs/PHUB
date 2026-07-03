@@ -16,38 +16,26 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 from __future__ import annotations
 
-import argparse
 import os
+import json
+import argparse
 import logging
 import asyncio
-import demjson3
 
 from curl_cffi import Response, AsyncSession
 from functools import cached_property
 from typing import AsyncGenerator, Any, Literal, cast
 from base_api.modules.type_hints import DownloadReport
-from base_api.base import BaseCore, setup_logger, Helper
-from base_api.modules.errors import InvalidProxy, UnknownError, NetworkingError, BotProtectionDetected
+from base_api import BaseCore, setup_logger, Helper, DownloadConfigRAW, DownloadConfigHLS, ScrapeResult
+from base_api.modules.errors import InvalidProxy, UnknownError, NetworkRequestError, BotProtectionDetected, ResourceGone
+from selectolax.lexbor import LexborHTMLParser
 
-try:
-    import lxml
-    parser = "lxml" # Faster speeds, but more dependencies
-
-except (ModuleNotFoundError, ImportError):
-    parser = "html.parser" # Fallback to classic HTML parser (will work fine)
-
-try:
-    from modules.consts import *
-    from modules.errors import *
-    from modules.sorting import *
-    from modules.type_hints import *
-
-except (ModuleNotFoundError, ImportError):
-    from .modules.consts import *
-    from .modules.errors import *
-    from .modules.sorting import *
-    from .modules.type_hints import *
-
+from phub.modules.errors import (NetworkError, NotFound, ProxyError, LoginFailed, GifPendingReview, BotDetection,
+                                 UnknownNetworkError)
+from phub.modules.consts import (extractor_model, extractor_videos, extractor_gifs, extractor_videos_playlist,
+                                 extractor_users, extractor_hubtraffic, extractor_videos_from_playlist_page, HOST,
+                                 REGEX_VIDEO_FLASHVARS, REGEX_TOKEN, HEADERS)
+from phub.modules.type_hints import on_error_hint
 
 async def on_error(url: str, error: Exception, attempt: int) -> bool:
     print(f"URL: {url}, ERROR: {error}, Attempt: {attempt}")
@@ -70,7 +58,7 @@ async def get_html_content(core: BaseCore, url: str) -> str | None | dict:
             if content.status_code == 404:
                 raise NotFound(f"Server returned 404 for: {url}")
 
-    except NetworkingError as e:
+    except NetworkRequestError as e:
         raise NetworkError(str(e)) from e
 
     except InvalidProxy as e:
@@ -83,41 +71,11 @@ async def get_html_content(core: BaseCore, url: str) -> str | None | dict:
         raise UnknownNetworkError(str(e)) from e
 
 
-class BaseObject:
-    def __init__(self, url: str, core: BaseCore, html_content: str | None = None):
-        self.url = url
-        self.core = core
-        self.html_content = html_content
-        self._soup = None
-        self.logger = setup_logger(name=f"PornHub API - [{self.__class__.__name__}]", log_file=None, level=logging.ERROR)
-
-    async def _ensure_html(self):
-        """Ensures that html_content is available by fetching it if necessary."""
-        if not self.html_content:
-            self.html_content = await get_html_content(core=self.core, url=self.url)
-
-        assert isinstance(self.html_content, str)
-        return self.html_content
-
-    @property
-    def soup(self) -> BeautifulSoup:
-        """BeautifulSoup object. Triggers error if HTML fetch is missing and not already provided."""
-        if self._soup is None:
-            if not self.html_content:
-                raise AttributeError(f"HTML content not available for {self.__class__.__name__}. Call 'await init()' first.")
-            self._soup = BeautifulSoup(self.html_content, parser)
-        return self._soup
-
-    async def init(self):
-        """Initializes the object by fetching HTML content."""
-        await self._ensure_html()
-        return self
-
-
-class UserHelper(Helper, BaseObject):
+class UserHelper(Helper):
     def __init__(self, url: str, core: BaseCore):
-        BaseObject.__init__(self, url=url, core=core, html_content=None)
+        super
         self.core = core # Keep for Helper compatibility
+        self.lexbor: LexborHTMLParser | None = None
 
     async def _make_video_safe(self, video_data: str | dict, **kwargs):
         """
@@ -125,8 +83,12 @@ class UserHelper(Helper, BaseObject):
         """
         if isinstance(video_data, dict):
             url = video_data.pop("url")
-            return Video(url, core=self.core, api_data=video_data)
-        return Video(video_data, core=self.core)
+            video = Video(url, core=self.core, api_data=video_data)
+
+        else:
+            video = Video(video_data, core=self.core)
+        
+        return await video.init()
 
     def enable_logging(self, log_file: str | None = None, level: int | None = None, log_ip: str | None = None, log_port: int | None = None):
         if not level:
@@ -137,45 +99,46 @@ class UserHelper(Helper, BaseObject):
     @cached_property
     def bio(self) -> str | None:
         try:
-            return self.soup.find("div", class_="content js-headerContent js-highestChild").find("div", attrs={
-                "itemprop": True}).text
+            return self.lexbor.css_first("div.content.js-headerContent.js-highestChild").css_first("div[itemprop]").text(strip=True)
 
         except AttributeError:
             return None
 
     @cached_property
     def about(self) -> str:
-        return self.soup.find("section", class_="aboutMeSection sectionDimensions").find_all("div")[1].text.strip()
+        return self.lexbor.css_first("section.aboutMeSection.sectionDimensions").css("div")[1].text(strip=True)
 
     @cached_property
     def info(self) -> dict:
         return_thing_idk_bro = {}
 
-        container = self.soup.find("div", class_="content-columns inline js-highestChild js-headerContent")
+        container = self.lexbor.css_first("div.content-columns.inline.js-highestChild.js-headerContent")
 
         if not container:
-            container = self.soup.find("div", class_="content-columns js-highestChild columns-2")
+            container = self.lexbor.css_first("div.content-columns.js-highestChild.columns-2")
 
-        stuff = container.find_all("div", class_="infoPiece")
+        stuff = container.css("div.infoPiece")
 
         for thing in stuff:
-            return_thing_idk_bro[thing.find_all("span")[0].text.strip()] = thing.find_all("span")[1].text.strip()
+            return_thing_idk_bro[thing.css_first("span").text(strip=True)] = thing.css("span")[1].text(strip=True)
 
         return return_thing_idk_bro
 
 
     async def get_videos(self, pages: int = 5, videos_concurrency: int | None = None, pages_concurrency: int | None = None,
                          on_video_error: on_error_hint = on_error,
-                         on_page_error: on_error_hint = None) -> AsyncGenerator[Video, None]:
+                         keep_original_order: bool = False,
+                         on_page_error: on_error_hint = None) -> AsyncGenerator[ScrapeResult, None]:
         page_urls = [f"{self.url}/videos?page={page}" for page in range(1, pages + 1)]
         self.logger.debug(f"Processing: {len(page_urls)} pages...")
         videos_concurrency = videos_concurrency or self.core.configuration.videos_concurrency
         pages_concurrency = pages_concurrency or self.core.configuration.pages_concurrency
         assert videos_concurrency and pages_concurrency
-        async for video in self.iterator(target_page_urls=page_urls, max_video_concurrency=videos_concurrency,
-                                         max_page_concurrency=pages_concurrency, video_link_extractor=extractor_videos,
-                                         on_video_error=on_video_error, on_page_error=on_page_error):
-            yield video
+        async for result in self.iterator(target_page_urls=page_urls, max_video_concurrency=videos_concurrency,
+                                         max_page_concurrency=pages_concurrency, video_link_extractor=extractor_model,
+                                         on_video_error=on_video_error, on_page_error=on_page_error,
+                                          keep_original_order=keep_original_order):
+            yield result
 
 
 class SubscriptionHelper(Helper):
@@ -190,18 +153,20 @@ class SubscriptionHelper(Helper):
     async def get_subscriptions(self, url: str, pages: int = 5, pages_concurrency: int | None = None,
                                 videos_concurrency: int | None = None,
                                 on_video_error: on_error_hint = on_error,
-                                on_page_error: on_error_hint = None
+                                on_page_error: on_error_hint = None,
+                                keep_original_order: bool = False
                                 ) -> AsyncGenerator[User, None]:
         page_urls = [f"{url}?page={page}" for page in range(1, pages + 1)]
         videos_concurrency = videos_concurrency or self.core.configuration.videos_concurrency
         pages_concurrency = pages_concurrency or self.core.configuration.pages_concurrency
         assert videos_concurrency and pages_concurrency
-        async for user in self.iterator(target_page_urls=page_urls, video_link_extractor=extractor_users,
+        async for result in self.iterator(target_page_urls=page_urls, video_link_extractor=extractor_users,
                                         use_alternative_constructor=True,
                                         max_page_concurrency=pages_concurrency,
                                         max_video_concurrency=videos_concurrency,
-                                        on_video_error=on_video_error, on_page_error=on_page_error):
-            yield user
+                                        on_video_error=on_video_error, on_page_error=on_page_error,
+                                        keep_original_order=keep_original_order):
+            yield result
 
 
 class Pornstar(UserHelper):
@@ -210,33 +175,32 @@ class Pornstar(UserHelper):
         super().__init__(url=url, core=core)
 
     async def get_uploads(self, pages: int = 5, videos_concurrency: int | None = None, pages_concurrency: int | None = None,
-                          on_video_error: on_error_hint = on_error, on_page_error: on_error_hint = None
-                          ) -> \
-            AsyncGenerator[Video, None]:
+                          on_video_error: on_error_hint = on_error, on_page_error: on_error_hint = None,
+                          keep_original_order: bool = False) -> AsyncGenerator[ScrapeResult, None]:
         page_urls = [f"{self.url}/videos/upload?page={page}" for page in range(1, pages + 1)]
         self.logger.debug(f"Processing: {len(page_urls)} pages...")
         videos_concurrency = videos_concurrency or self.core.configuration.videos_concurrency
         pages_concurrency = pages_concurrency or self.core.configuration.pages_concurrency
         assert videos_concurrency and pages_concurrency
-        async for video in self.iterator(target_page_urls=page_urls, max_video_concurrency=videos_concurrency,
+        async for result in self.iterator(target_page_urls=page_urls, max_video_concurrency=videos_concurrency,
                                          max_page_concurrency=pages_concurrency, video_link_extractor=extractor_videos,
-                                         on_video_error=on_video_error, on_page_error=on_page_error):
-            yield video
+                                         on_video_error=on_video_error, on_page_error=on_page_error,
+                                          keep_original_order=keep_original_order):
+            yield result
 
 
     async def get_gifs(self, pages: int = 5, videos_concurrency: int | None = None, pages_concurrency: int | None = None,
-                       on_video_error: on_error_hint = on_error, on_page_error: on_error_hint = None
-                       ) -> \
-    AsyncGenerator[GIF, None]:
+                       on_video_error: on_error_hint = on_error, on_page_error: on_error_hint = None,
+                       keep_original_order: bool = False) -> AsyncGenerator[ScrapeResult, None]:
         page_urls = [f"{self.url}/gifs/video?page={page}" for page in range(1, pages + 1)]
         self.logger.debug(f"Processing: {len(page_urls)} pages...")
         videos_concurrency = videos_concurrency or self.core.configuration.videos_concurrency
         pages_concurrency = pages_concurrency or self.core.configuration.pages_concurrency
         assert videos_concurrency and pages_concurrency
-        async for gif in self.iterator(target_page_urls=page_urls, max_video_concurrency=videos_concurrency,
+        async for scrape_result in self.iterator(target_page_urls=page_urls, max_video_concurrency=videos_concurrency,
                                        max_page_concurrency=pages_concurrency, video_link_extractor=extractor_gifs,
                                        on_video_error=on_video_error, on_page_error=on_page_error):
-            yield await gif.init()
+            yield await scrape_result
 
 
 class Model(UserHelper):
@@ -304,7 +268,7 @@ class Album(BaseObject):
                 html_code = await get_html_content(core=self.core, url=url)
 
             assert isinstance(html_code, str)
-            soup = BeautifulSoup(html_code, parser)
+            soup = (html_code)
             main_ul = soup.find("ul", class_="photosAlbumsListing albumViews preloadImage")
             li_tags = main_ul.find_all("div", class_="js_lazy_bkg photoAlbumListBlock")
             for li_tag in li_tags:
@@ -1427,10 +1391,12 @@ class Client(Helper):
             url = video_data.pop("url")
             # If metadata says it's from search, we can treat it as api_data for the Video object
             # This avoids fetching the video page HTML during search/iteration
-            return Video(url, core=self.core, api_data=video_data, force_scraping=force)
+            video = Video(url, core=self.core, api_data=video_data, force_scraping=force)
+            return await video.init()
         
         # If it's just a URL string, we create a Video object without fetching HTML yet
-        return Video(video_data, core=self.core, force_scraping=force)
+        video = Video(video_data, core=self.core, force_scraping=force)
+        return await video.init()
 
     def enable_logging(self, log_file: str | None = None, level: int | None =None, log_ip: str | None = None, log_port: int | None = None):
         if not level:
@@ -1762,5 +1728,16 @@ async def run_main():
 def cli():
     asyncio.run(run_main())
 
+async def test():
+    core = BaseCore()
+    core.enable_logging(level=logging.DEBUG)
+    client = Client(core)
+    idx = 0
+    async for video in client.search_videos("fortnite"):
+        idx += 1
+        print(f"{idx}) {video.title}")
+
 if __name__ == "__main__":
-    cli()
+    asyncio.run(test())
+
+
