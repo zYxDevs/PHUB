@@ -1,5 +1,7 @@
 import pytest
-from phub import Client
+from base_api import DownloadConfigRAW
+
+from pornhub_api import Client
 
 @pytest.fixture
 def client():
@@ -13,6 +15,9 @@ async def test_gif(client):
     assert isinstance(gif.publish_date, str) and len(gif.publish_date) > 0
     assert isinstance(gif.content_url, str) and len(gif.content_url) > 0
     assert isinstance(gif.tags, dict) and len(gif.tags) > 0
-    assert isinstance(gif.vote_count, int)
+    assert isinstance(gif.vote_count, str)
     assert isinstance(gif.vote_percentage, str)
-    assert await gif.download() is True
+
+    config = DownloadConfigRAW(quality="best", path="./")
+
+    assert await gif.download(configuration=config) is True

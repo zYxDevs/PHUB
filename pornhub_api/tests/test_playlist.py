@@ -1,6 +1,6 @@
 import pytest
 
-from phub import Client, User
+from pornhub_api import Client, User
 
 @pytest.fixture
 def client():
@@ -12,20 +12,20 @@ async def test_playlist(client):
     assert isinstance(playlist.title, str) and len(playlist.title) > 0
     assert isinstance(playlist.tags, dict)
     assert isinstance(playlist.token, str) and len(playlist.token) > 0
-    assert isinstance(playlist.pid, str) and len(playlist.pid) > 0
+    assert isinstance(playlist.playlist_id, str) and len(playlist.playlist_id) > 0
     assert isinstance(playlist.views, str) and len(playlist.views) > 0
-    assert isinstance(playlist.unavailable_videos_count, int)
+    assert isinstance(playlist.unavailable_videos, int)
     assert isinstance(playlist.rating_percent, str) and len(playlist.rating_percent) > 0
-    assert isinstance(playlist.video_count, int) and len(str(playlist.video_count)) > 0
+    assert isinstance(playlist.video_count, str) and len(str(playlist.video_count)) > 0
     assert isinstance(playlist.description, str) and len(playlist.description) > 0
-    assert isinstance(playlist.likes, int)
-    assert isinstance(playlist.dislikes, int)
+    assert isinstance(playlist.likes, str)
+    assert isinstance(playlist.dislikes, str)
     assert isinstance(await playlist.get_author(), User)
 
     idx = 0
     async for video in playlist.get_videos():
         idx += 1
-        assert isinstance(video.title, str)
+        assert isinstance(video.video.title, str)
 
         if idx == 5:
             break

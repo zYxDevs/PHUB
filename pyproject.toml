@@ -3,9 +3,9 @@ requires = ["uv_build>=0.9.18,<0.10.0"]
 build-backend = "uv_build"
 
 [project]
-name = "phub"
-version = "5.1.2"
-description = "An API for Pornhub"
+name = "unofficial-api-for-pornhub"
+version = "5.2"
+description = "An asynchronous API wrapper and scraper for Pornhub"
 authors = [
   {name = 'Egsagon', email = "egsagon.git@gmail.com"},
   {name = "EchterAlsFake", email = "EchterAlsFake@proton.me"}
@@ -21,25 +21,19 @@ dependencies = [
   "m3u8",
   "chompjs",
   "selectolax",
-  "bs4",
   "eaf-base-api",
 ]
 
 [project.optional-dependencies]
-av = ["av; python_version >= '3.12'"]
-full = ["lxml"] # H2 for HTTP 2.0 support, LXML for faster parsing speed, though optional :)
-
+av = ["av"]
 
 [project.scripts]
-phub = "phub.phub:cli"
+phub = "pornhub_api.api:cli"
 
 [project.urls]
 Documentation = "https://github.com/EchterAlsFake/API_Docs/blob/master/Porn_APIs/PHUB.md"
-Repository = "https://github.com/EchterAlsFake/PHUB"
+Repository = "https://github.com/EchterAlsFake/unofficial-api-for-pornhub"
 
 [tool.uv.build-backend]
-module-name = "phub"
+module-name = "pornhub_api"
 module-root = ""
-
-[tool.uv.sources]
-eaf-base-api = { path = "../eaf_base_api", editable = true }

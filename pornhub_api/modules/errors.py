@@ -39,3 +39,9 @@ class ProxyError(Exception):
 class UnknownNetworkError(Exception):
     def __init__(self, msg):
         self.msg = msg
+
+
+class DownloadFailed(Exception):
+    def __init__(self, msg: str):
+        super().__init__(msg)
+        self.msg = msg

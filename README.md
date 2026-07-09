@@ -61,19 +61,19 @@ This API has been tested and confirmed working on:
 > [!TIP]
 > PHUB can be run as a CLI tool. Please see the [CLI Documentation](https://github.com/EchterAlsFake/API_Docs/blob/master/Porn_APIs/CLI_PHUB.md)
 
-
 ```python
 import asyncio
-import phub
+import pornhub_api
+
 
 async def main():
     # Initialize an async client
-    client = phub.Client()
+    client = pornhub_api.Client()
 
     # Fetch and download a video
     video = await client.get_video('https://...')
-    await video.ensure_html() # For Downloading the HTML Code needs to be retrieved!
-    await video.download(quality="best", path="my-video.mp4") # See docs for more options
+    await video.ensure_html()  # For Downloading the HTML Code needs to be retrieved!
+    await video.download(quality="best", path="my-video.mp4")  # See docs for more options
 
     # Fetch user videos
     user = await client.get_user('this-user')
@@ -85,21 +85,22 @@ async def main():
         print(video.title)
 
     # Connect to an account
-    client = phub.Client(email='my-email', password='my-password', login=True)
-    await asyncio.sleep(2) # Allow login task to finish
-    
+    client = pornhub_api.Client(email='my-email', password='my-password', login=True)
+    await asyncio.sleep(2)  # Allow login task to finish
+
     # Alternatively, manually await login:
     # await client.login()
 
     # Access account history, liked and recommended stuff
     async for video in client.get_history():
         print(video.title)
-        
+
     async for video in client.get_favorites():
         print(video.title)
-        
+
     async for video in client.get_recommended():
         print(video.title)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

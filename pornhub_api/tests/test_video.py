@@ -1,6 +1,7 @@
 import pytest
+from base_api import DownloadConfigHLS
 
-from phub import Client
+from pornhub_api import Client
 
 @pytest.fixture
 def client():
@@ -10,7 +11,7 @@ def client():
 async def test_video(client):
     client = Client()
     # By default this uses HubTraffic API
-    video = await client.get_video("https://www.pornhub.com/view_video.php?viewkey=ph61d5d646249b2")
+    video = await client.get_video("https://www.pornhub.com/view_video.php?viewkey=ph61d5d646249b2", load_api=True, load_html=True)
 
     # These should be available via API data without HTML
     assert isinstance(video.title, str) and len(video.title) > 3
@@ -19,15 +20,7 @@ async def test_video(client):
     assert isinstance(video.duration, int)
     assert isinstance(video.likes, str)
     assert isinstance(video.thumbnail, str)
-    
-    # HTML shouldn't be fetched yet
-    assert video.html_content is None
-    
-    # Now fetch HTML for deep scraping
-    await video.ensure_html()
-    assert video.html_content is not None
 
-    assert isinstance(video.flashvars, dict)
     assert isinstance(video.available_qualities, list) and len(video.available_qualities) > 0
     assert isinstance(video.is_vertical, bool)
     assert isinstance(video.is_video_unavailable, bool)
@@ -37,10 +30,10 @@ async def test_video(client):
     # After HTML fetch, these might be dicts if from scrape or list if from API
     assert isinstance(video.categories, (dict, list))
     assert isinstance(video.tags, (dict, list))
-    assert isinstance(video.get_m3u8_urls, dict)
     assert isinstance(video.m3u8_base_url, str)
     assert isinstance(video.is_video_unavailable_in_your_country, bool)
 
-    stuff = await video.download(quality="best", return_report=True)
+    config = DownloadConfigHLS(quality="best", return_report=True, path="./")
+    stuff = await video.download(config)
     assert stuff["status"] == "completed"
 

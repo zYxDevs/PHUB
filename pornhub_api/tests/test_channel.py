@@ -1,5 +1,5 @@
 import pytest
-from phub import Client
+from pornhub_api import Client
 
 @pytest.fixture
 def client() -> Client:
@@ -8,10 +8,10 @@ def client() -> Client:
 
 @pytest.mark.asyncio
 async def test_channel(client):
-    channel = await client.get_channel("https://www.pornhub.com/channels/brazzers/")
+    channel = await client.get_channel("https://www.pornhub.com/channels/brazzers/", load_html=True)
     assert isinstance(channel.name, str) and len(channel.name) > 0
     assert isinstance(channel.description, str) and len(channel.description) > 0
-    assert isinstance(channel.rank, int)
+    assert isinstance(channel.rank, str)
     assert isinstance(channel.join_date, str) and len(channel.join_date) > 0
     assert isinstance(channel.website, str) and len(channel.website) > 0
     assert isinstance(channel.is_award_winner, bool)

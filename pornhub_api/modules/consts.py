@@ -1,7 +1,11 @@
 import re
 import json
 
+from typing import Any
 from selectolax.lexbor import LexborHTMLParser
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 INCREMENT = 30
@@ -37,10 +41,62 @@ REGEX_VIDEO_FLASHVARS = re.compile(r"var\s+flashvars_\d+\s*=\s*(\{.*?\});", re.D
 REGEX_TOKEN = re.compile(r'token\s*=\s*"([^"]+)"')
 
 
+def parse_quality(value: Any) -> int:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        digits = ''.join(ch for ch in value if ch.isdigit())
+        if digits:
+            return int(digits)
+    return 0
+
+
+def parse_quality_from_url(url: str) -> int:
+    for part in url.split('/'):
+        if 'P_' in part or 'p_' in part:
+            prefix = part.split('P_', 1)[0].split('p_', 1)[0]
+            return parse_quality(prefix)
+    return 0
+
+
+def estimate_width(height: int) -> int:
+    if height <= 0:
+        return 0
+
+    return int(height * 9 / 16)
+
+
+def get_m3u8_urls(media_definitions: dict) -> dict:
+    quality_urls = {}
+    raw_qualities = media_definitions
+
+    for q in raw_qualities:
+        if q.get('format') != 'hls' or not q.get('videoUrl'):
+            continue
+
+        try:
+            width = int(q.get('width') or 0)
+            height = int(q.get('height') or 0)
+            url = q['videoUrl']
+
+            if not height:
+                height = parse_quality(q.get('quality')) or parse_quality_from_url(url)
+            if not width and height:
+                width = estimate_width(height)
+
+            if not width and not height:
+                continue
+
+            quality_urls[(width, height)] = url
+
+        except Exception as e:
+            continue
+
+    return quality_urls
+
 def extractor_gifs(html_content: str) -> list:
     links = []
     lexbor = LexborHTMLParser(html_content)
-    
     # Try multiple possible containers for GIFs
     containers = [
         lexbor.css_first("div.gifsWrapperProfile"),
@@ -58,9 +114,9 @@ def extractor_gifs(html_content: str) -> list:
         # Ensure it's a GIF link (usually /gif/ followed by digits) and not a duplicate
         if href.startswith("/gif/") and any(char.isdigit() for char in href):
             full_url = f"https://www.pornhub.com{href}"
-            if full_url not in links:
-                links.append(full_url)
+            links.append({"url": full_url})
 
+    logger.debug(f"extractor_gifs extracted {len(links)} links")
     return list(set(links))
 
 
@@ -72,8 +128,9 @@ def extractor_model(html_content: str) -> list:
     video_keys = [key.attributes.get("data-video-vkey") for key in soup1.css("[data-video-vkey]")]
 
     for key in video_keys:
-        urls.append(f"https://www.pornhub.com/view_video.php?viewkey={key}")
+        urls.append({"url": f"https://www.pornhub.com/view_video.php?viewkey={key}"})
 
+    logger.debug(f"extractor_model extracted {len(urls)} urls")
     return urls
 
 
@@ -92,7 +149,8 @@ def extractor_videos(html_content: str) -> list:
             url = f"https://www.pornhub.com{href}"
             if any(r["url"] == url for r in results):
                 continue
-            results.append({"url": url, "from_search": True})
+            results.append({"url": url})
+        logger.debug(f"extractor_videos extracted {len(results)} videos (fallback)")
         return results
 
     for block in video_blocks:
@@ -134,6 +192,7 @@ def extractor_videos(html_content: str) -> list:
         except Exception:
             continue
 
+    logger.debug(f"extractor_videos extracted {len(results)} videos")
     return results
 
 
@@ -148,6 +207,7 @@ def extractor_hubtraffic(json_content: str) -> list:
         if not videos:
             return []
 
+        logger.debug(f"extractor_hubtraffic extracted {len(videos)} videos")
         # We return the whole dict for each video so the iterator can pass it to Video object
         return videos
     except json.JSONDecodeError:
@@ -165,9 +225,10 @@ def extractor_videos_from_playlist_page(html_content: str) -> list:
         if href:
             # Ensure the URL is absolute
             if not href.startswith("https://www.pornhub.com"):
-                links.append(f"https://www.pornhub.com{href}")
+                links.append({"url": f"https://www.pornhub.com{href}"})
             else:
-                links.append(href)
+                links.append({"url": href})
+    logger.debug(f"extractor_videos_from_playlist_page extracted {len(links)} links")
     return list(set(links))
 
 
@@ -193,10 +254,11 @@ def extractor_videos_playlist(content: str) -> list:
             href = a_tag.attributes.get("href")
             if href:
                 if not href.startswith("https://www.pornhub.com"):
-                    links.append(f"https://www.pornhub.com{href}")
+                    links.append({"url": f"https://www.pornhub.com{href}"})
                 else:
-                    links.append(href)
+                    links.append({"url": href})
 
+    logger.debug(f"extractor_videos_playlist extracted {len(links)} links")
     return list(set(links))
 
 
@@ -211,7 +273,7 @@ def extractor_users(html_content: str) -> list:
         href = a_tag.attributes.get("href")
         if href.startswith("/"):
             url = f"https://www.pornhub.com{href}"
-            if url not in users:
-                users.append(url)
+            users.append({"url": url})
 
+    logger.debug(f"extractor_users extracted {len(users)} users")
     return list(set(users))
