@@ -13,7 +13,19 @@ authors = [
 requires-python = ">=3.12"
 license = "LGPL-3.0-only"
 license-files = ["LICENSE"]
-keywords = ["pornhub", "phub", "porn", "api", "web scrapper", "api wrapper"]
+keywords = [
+    "api",
+    "scraper",
+    "async",
+    "asyncio",
+    "video-downloader",
+    "selectolax",
+    "chompjs",
+    "m3u8",
+    "hls",
+    "pornhub",
+    "login"
+]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
@@ -41,6 +53,10 @@ phub = "pornhub_api.api:cli"
 [project.urls]
 Documentation = "https://github.com/EchterAlsFake/API_Docs/blob/master/Porn_APIs/PHUB.md"
 Repository = "https://github.com/EchterAlsFake/unofficial-api-for-pornhub"
+"Bug Tracker" = "https://github.com/EchterAlsFake/unofficial-api-for-pornhub/issues"
+"Support me on Ko-Fi" = "https://ko-fi.com/EchterAlsFake"
+"Donate via PayPal" = "https://paypal.me/EchterAlsFake"
+"Donate via Crypto" = "https://nowpayments.io/donation/EchterAlsFake"
 
 [tool.uv.build-backend]
 module-name = "pornhub_api"

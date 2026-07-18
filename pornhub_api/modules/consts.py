@@ -196,43 +196,6 @@ def extractor_videos(html_content: str) -> list:
     return results
 
 
-def extractor_hubtraffic(json_content: str) -> list:
-    """
-    Extractor for HubTraffic API (Webmaster API) which returns JSON.
-    Returns a list of dictionaries containing video data.
-    """
-    try:
-        data = json.loads(json_content)
-        videos = data.get("videos")
-        if not videos:
-            return []
-
-        logger.debug(f"extractor_hubtraffic extracted {len(videos)} videos")
-        # We return the whole dict for each video so the iterator can pass it to Video object
-        return videos
-    except json.JSONDecodeError:
-        return []
-
-
-def extractor_videos_from_playlist_page(html_content: str) -> list:
-    unique_urls = set()
-    lexbor = LexborHTMLParser(html_content)
-    
-    # Search for all 'a' tags with an href containing "/view_video.php?viewkey="
-    # Use re.compile for regex matching in find_all
-    for a_tag in lexbor.css("a[href*='viewkey=']"):
-        href = a_tag.attributes.get("href")
-        if href:
-            # Ensure the URL is absolute
-            if not href.startswith("https://www.pornhub.com"):
-                unique_urls.add(f"https://www.pornhub.com{href}")
-            else:
-                unique_urls.add(href)
-
-    links = [{"url": url} for url in unique_urls]
-    return links
-
-
 def extractor_videos_playlist(content: str) -> list:
     unique_urls = set()
     html_to_parse = None

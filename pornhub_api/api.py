@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import re
 import json
+import copy
 import chompjs
 import logging
 import asyncio
@@ -37,19 +38,23 @@ from base_api.modules.errors import InvalidProxy, UnknownError, NetworkRequestEr
 from pornhub_api.modules.errors import (NetworkError, NotFound, ProxyError, LoginFailed, GifPendingReview, BotDetection,
                                         UnknownNetworkError, DownloadFailed, VideoDisabled, ClientAlreadyLogged)
 from pornhub_api.modules.consts import (extractor_model, extractor_videos, extractor_gifs, extractor_videos_playlist,
-                                        extractor_users, extractor_hubtraffic, extractor_videos_from_playlist_page, HOST,
+                                        extractor_users, HOST,
                                         REGEX_VIDEO_FLASHVARS, REGEX_TOKEN, HEADERS, get_m3u8_urls, COOKIES, LOGIN_PAYLOAD)
 from pornhub_api.modules.type_hints import on_error_hint
 
+
+logger = logging.getLogger("PornHub API")
+logger.addHandler(logging.NullHandler())
+
+
 async def on_error(url: str, error: Exception, attempt: int) -> bool:
-    print(f"URL: {url}, ERROR: {error}, Attempt: {attempt}")
+    logger.error(f"URL: {url}, ERROR: {error}, Attempt: {attempt}")
 
     if isinstance(error, ResourceGone):
         return False
 
     return True
 
-logger = logging.getLogger(__name__)
 
 async def get_html_content(core: BaseCore, url: str) -> str | None | dict:
     # What should I do here?
@@ -101,9 +106,10 @@ class UserHelper(BaseMedia):
         html_content = await get_html_content(core=self.core, url=self.url)
         assert isinstance(html_content, str)
         data: dict = await asyncio.to_thread(self._extract_html, html_content)
-        self.info = data.get("info")
-        self.bio = data.get("bio")
-        self.about = data.get("about")
+        allowed_fields = {field.name for field in fields(self)}
+        for key, value in data.items():
+            if key in allowed_fields:
+                setattr(self, key, value)
 
     @staticmethod
     def _extract_html(html_content: str) -> dict:
@@ -146,8 +152,9 @@ class UserHelper(BaseMedia):
                          on_video_error: on_error_hint = on_error,
                          keep_original_order: bool = False, load_html: bool = False, load_api: bool = True,
                          on_page_error: on_error_hint = None) -> AsyncGenerator[ScrapeResult, None]:
+        url = self.url
         helper = Helper(core=self.core, constructor=Video)
-        page_urls = [f"{self.url}/videos?page={page}" for page in range(1, pages + 1)]
+        page_urls = [f"{url}/videos?page={page}" for page in range(1, pages + 1)]
         logger.debug(f"Processing: {len(page_urls)} pages...")
         videos_concurrency = videos_concurrency or self.core.configuration.videos_concurrency
         pages_concurrency = pages_concurrency or self.core.configuration.pages_concurrency
@@ -187,8 +194,9 @@ class Pornstar(UserHelper):
                           on_video_error: on_error_hint = on_error, on_page_error: on_error_hint = None,
                           keep_original_order: bool = False,
                           load_html: bool = False, load_api: bool = True) -> AsyncGenerator[ScrapeResult, None]:
+        url = self.url
         helper = Helper(core=self.core, constructor=Video)
-        page_urls = [f"{self.url}/videos/upload?page={page}" for page in range(1, pages + 1)]
+        page_urls = [f"{url}/videos/upload?page={page}" for page in range(1, pages + 1)]
         logger.debug(f"Processing: {len(page_urls)} pages...")
         videos_concurrency = videos_concurrency or self.core.configuration.videos_concurrency
         pages_concurrency = pages_concurrency or self.core.configuration.pages_concurrency
@@ -196,7 +204,7 @@ class Pornstar(UserHelper):
         async for result in helper.iterator(target_page_urls=page_urls, max_video_concurrency=videos_concurrency,
                                         max_page_concurrency=pages_concurrency, video_link_extractor=extractor_videos,
                                         on_video_error=on_video_error, on_page_error=on_page_error,
-                                        keep_original_order=keep_original_order):
+                                        keep_original_order=keep_original_order, fetch_html=load_html, fetch_api=load_api):
             yield result
 
 
@@ -204,8 +212,9 @@ class Pornstar(UserHelper):
                        on_video_error: on_error_hint = on_error, on_page_error: on_error_hint = None,
                        keep_original_order: bool = False,
                        load_html: bool = False, load_api: bool = True) -> AsyncGenerator[ScrapeResult, None]:
+        url = self.url
         helper = Helper(core=self.core, constructor=GIF)
-        page_urls = [f"{self.url}/gifs/video?page={page}" for page in range(1, pages + 1)]
+        page_urls = [f"{url}/gifs/video?page={page}" for page in range(1, pages + 1)]
         logger.debug(f"Processing: {len(page_urls)} pages...")
         videos_concurrency = videos_concurrency or self.core.configuration.videos_concurrency
         pages_concurrency = pages_concurrency or self.core.configuration.pages_concurrency
@@ -249,7 +258,7 @@ class Album(BaseMedia):
         assert isinstance(html_content, str)
         data: dict = await asyncio.to_thread(self._extract_html, html_content)
 
-        allowed_fields = {f.name for f in fields(self)}
+        allowed_fields = {field.name for field in fields(self)}
         for key, value in data.items():
             if key in allowed_fields:
                 setattr(self, key, value)
@@ -366,7 +375,7 @@ class Short(BaseMedia):
         assert isinstance(html_content, str)
         data: dict = await asyncio.to_thread(self._extract_html, html_content)
 
-        allowed_fields = {f.name for f in fields(self)}
+        allowed_fields = {field.name for field in fields(self)}
         for key, value in data.items():
             if key in allowed_fields:
                 setattr(self, key, value)
@@ -442,7 +451,7 @@ class Short(BaseMedia):
         :return:
         """
         logger.info(f"Downloading Short {self.title} to {configuration.path}")
-        config = configuration
+        config = copy.deepcopy(configuration)
         config.m3u8_base_url = self.m3u8_base_url
         if not config.no_title:
             config.path = os.path.join(config.path, f"{self.title}.mp4")
@@ -483,7 +492,7 @@ class GIF(BaseMedia):
             raise VideoDisabled("The Video has been disabled, I can not fetch any data from it.")
 
         data: dict = await asyncio.to_thread(self._extract_html, html_content)
-        allowed_fields = [f.name for f in fields(self)]
+        allowed_fields = {field.name for field in fields(self)}
 
         for key, value in data.items():
             if key in allowed_fields:
@@ -545,7 +554,7 @@ class GIF(BaseMedia):
         :return:
         """
         logger.info(f"Downloading GIF {self.title} to {configuration.path}")
-        config = configuration
+        config = copy.deepcopy(configuration)
         if not config.no_title:
             config.path = os.path.join(config.path, f"{self.title}.mp4")
 
@@ -581,7 +590,7 @@ class Channel(BaseMedia):
         assert isinstance(html_content, str)
         data: dict = await asyncio.to_thread(self._extract_html, html_content)
 
-        allowed_fields = {f.name for f in fields(self)}
+        allowed_fields = {field.name for field in fields(self)}
         for key, value in data.items():
             if key in allowed_fields:
                 setattr(self, key, value)
@@ -621,15 +630,18 @@ class Channel(BaseMedia):
         }
 
     async def get_videos(self, pages: int = 5, videos_concurrency: int | None = None, pages_concurrency: int | None = None,
-                         on_video_error: on_error_hint = on_error, on_page_error: on_error_hint = None
+                         on_video_error: on_error_hint = on_error, on_page_error: on_error_hint = None,
+                         load_html: bool = False, load_api: bool = True, keep_original_order: bool = False
                          ) -> AsyncGenerator[ScrapeResult, None]:
+        helper = Helper(core=self.core, constructor=Video)
         page_urls = [f"{self.url}videos?page={page}" for page in range(1, pages + 1)]
         videos_concurrency = videos_concurrency or self.core.configuration.videos_concurrency
         pages_concurrency = pages_concurrency or self.core.configuration.pages_concurrency
         assert videos_concurrency and pages_concurrency
-        async for result in self.iterator(target_page_urls=page_urls, max_video_concurrency=videos_concurrency,
+        async for result in helper.iterator(target_page_urls=page_urls, max_video_concurrency=videos_concurrency,
                                          max_page_concurrency=pages_concurrency, video_link_extractor=extractor_videos,
-                                         on_video_error=on_video_error, on_page_error=on_page_error):
+                                         on_video_error=on_video_error, on_page_error=on_page_error,
+                                         keep_original_order=keep_original_order, fetch_html=load_html, fetch_api=load_api):
             yield result
 
     async def get_user(self, load_html: bool = True) -> User:
@@ -663,7 +675,7 @@ class Playlist(BaseMedia):
         html_content = await get_html_content(url=self.url, core=self.core)
         assert isinstance(html_content, str)
         data: dict = await asyncio.to_thread(self._extract_html, html_content)
-        allowed_fields = [field.name for field in fields(self)]
+        allowed_fields = {field.name for field in fields(self)}
         for key, value in data.items():
             if key in allowed_fields:
                 setattr(self, key, value)
@@ -790,7 +802,7 @@ class Video(BaseMedia):
         html_content = await get_html_content(core=self.core, url=self.url)
         assert isinstance(html_content, str)
         data: dict = await asyncio.to_thread(self._extract_html, html_content)
-        allowed_fields = {f.name for f in fields(self)}
+        allowed_fields = {field.name for field in fields(self)}
         for key, value in data.items():
             if key in allowed_fields:
                 setattr(self, key, value)
@@ -800,7 +812,7 @@ class Video(BaseMedia):
         stuff = await get_html_content(url=f"https://www.pornhub.com/webmasters/video_by_id?id={self.video_id}", core=self.core)
         assert isinstance(stuff, str)
         data: dict = await asyncio.to_thread(self._extract_api, stuff)
-        allowed_fields = {f.name for f in fields(self)}
+        allowed_fields = {field.name for field in fields(self)}
         for key, value in data.items():
             if key in allowed_fields:
                 setattr(self, key, value)
@@ -964,7 +976,7 @@ class Video(BaseMedia):
         """
 
         logger.info(f"Downloading Video {self.title} to {configuration.path}")
-        config = configuration
+        config = copy.deepcopy(configuration)
         config.m3u8_base_url = self.m3u8_base_url
         if not config.no_title:
             config.path = os.path.join(config.path, f"{self.title}.mp4")
@@ -1235,7 +1247,6 @@ class Client:
     async def get_video(self, url: str, load_html: bool = False, load_api: bool = True) -> Video:
         """
         :param url: (str) The video URL
-        :param force_scraping: (bool) Whether to force web scraping instead of using the API
         :return: (Video) The video object
         """
         logger.debug(f"Client instantiating Video {url}")
